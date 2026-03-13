@@ -115,9 +115,12 @@ internal final class APIClient {
         alias: String? = nil,
         title: String? = nil,
         description: String? = nil,
+        ogImage: String? = nil,
         utmSource: String? = nil,
         utmMedium: String? = nil,
         utmCampaign: String? = nil,
+        utmContent: String? = nil,
+        utmTerm: String? = nil,
         expiresAt: String? = nil,
         completion: @escaping (CreatedLink?, Error?) -> Void
     ) {
@@ -125,16 +128,19 @@ internal final class APIClient {
             "api_key": config.apiKey,
             "destination_url": destination,
         ]
-        if !params.isEmpty     { body["params"]       = params }
-        if let v = iosUrl      { body["ios_url"]      = v }
-        if let v = androidUrl  { body["android_url"]  = v }
-        if let v = alias       { body["alias"]        = v }
-        if let v = title       { body["title"]        = v }
-        if let v = description { body["description"]  = v }
-        if let v = utmSource   { body["utm_source"]   = v }
-        if let v = utmMedium   { body["utm_medium"]   = v }
-        if let v = utmCampaign { body["utm_campaign"] = v }
-        if let v = expiresAt   { body["expires_at"]   = v }
+        if !params.isEmpty     { body["params"]        = params }
+        if let v = iosUrl      { body["ios_url"]       = v }
+        if let v = androidUrl  { body["android_url"]   = v }
+        if let v = alias       { body["alias"]         = v }
+        if let v = title       { body["title"]         = v }
+        if let v = description { body["description"]   = v }
+        if let v = ogImage     { body["og_image"]      = v }
+        if let v = utmSource   { body["utm_source"]    = v }
+        if let v = utmMedium   { body["utm_medium"]    = v }
+        if let v = utmCampaign { body["utm_campaign"]  = v }
+        if let v = utmContent  { body["utm_content"]   = v }
+        if let v = utmTerm     { body["utm_term"]      = v }
+        if let v = expiresAt   { body["expires_at"]    = v }
 
         DeeplinkLogger.log("createLink — dest=\(destination)")
 

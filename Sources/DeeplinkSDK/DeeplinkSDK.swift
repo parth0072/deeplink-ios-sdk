@@ -213,6 +213,22 @@ public final class Deeplink {
     ///     share(result.url)
     /// }
     /// ```
+    /// Create a deep link programmatically.
+    ///
+    /// ```swift
+    /// Deeplink.createLink(
+    ///     destination: "https://yourapp.com/product/123",
+    ///     params: ["product_id": "123"],
+    ///     title: "Check out this product",
+    ///     description: "Limited time offer",
+    ///     ogImage: "https://yourapp.com/images/product.jpg",
+    ///     utmSource: "instagram",
+    ///     utmCampaign: "summer_sale"
+    /// ) { result, error in
+    ///     guard let result else { return }
+    ///     share(result.url)
+    /// }
+    /// ```
     public static func createLink(
         destination: String,
         params: [String: String] = [:],
@@ -221,9 +237,12 @@ public final class Deeplink {
         alias: String? = nil,
         title: String? = nil,
         description: String? = nil,
+        ogImage: String? = nil,
         utmSource: String? = nil,
         utmMedium: String? = nil,
         utmCampaign: String? = nil,
+        utmContent: String? = nil,
+        utmTerm: String? = nil,
         expiresAt: String? = nil,
         completion: @escaping (CreatedLink?, Error?) -> Void
     ) {
@@ -240,9 +259,12 @@ public final class Deeplink {
             alias: alias,
             title: title,
             description: description,
+            ogImage: ogImage,
             utmSource: utmSource,
             utmMedium: utmMedium,
             utmCampaign: utmCampaign,
+            utmContent: utmContent,
+            utmTerm: utmTerm,
             expiresAt: expiresAt
         ) { result, error in
             DispatchQueue.main.async { completion(result, error) }
