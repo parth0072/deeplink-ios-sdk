@@ -8,6 +8,12 @@ internal final class APIClient {
     /// Set to true by Deeplink.checkPasteboardOnInstall()
     var pasteboardCheckEnabled: Bool = false
 
+    /// In-flight deduplication — queues completions so calling getInitData() and
+    /// onFirstLaunch() together in AppDelegate fires only ONE network request.
+    private var pendingInitCompletions: [(DeeplinkData?) -> Void] = []
+    private var initFetchInFlight = false
+    private let initLock = NSLock()
+
     init(config: DeeplinkConfig) {
         self.config = config
         self.session = URLSession(configuration: .default)
@@ -62,16 +68,34 @@ internal final class APIClient {
 
             DeeplinkLogger.log("fetchInitData — signals: model=\(model) os=\(osVer) screen=\(screen)")
 
+            // Deduplicate: if a fetch is already in flight, queue and return
+            self.initLock.lock()
+            self.pendingInitCompletions.append(completion)
+            let shouldFire = !self.initFetchInFlight
+            if shouldFire { self.initFetchInFlight = true }
+            self.initLock.unlock()
+
+            guard shouldFire else {
+                DeeplinkLogger.log("fetchInitData — request already in flight, queued")
+                return
+            }
+
             // Network call on background thread
             DispatchQueue.global(qos: .userInitiated).async {
                 self.post("/sdk/init", body: body) { (response: SDKInitResponse?) in
                     if let response {
                         DeeplinkLogger.log("fetchInitData — matched=\(response.matched) alias=\(response.data?.alias ?? "none")")
                     }
-                    guard let response, response.matched, let data = response.data else {
-                        completion(nil); return
-                    }
-                    completion(data.toDeeplinkData())
+                    let data = (response?.matched == true) ? response?.data?.toDeeplinkData() : nil
+
+                    // Drain all queued completions with the same result
+                    self.initLock.lock()
+                    let completions = self.pendingInitCompletions
+                    self.pendingInitCompletions = []
+                    self.initFetchInFlight = false
+                    self.initLock.unlock()
+
+                    completions.forEach { $0(data) }
                 }
             }
         }
