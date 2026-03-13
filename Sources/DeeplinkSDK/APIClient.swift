@@ -16,57 +16,70 @@ internal final class APIClient {
     // MARK: - SDK Endpoints
 
     func fetchInitData(completion: @escaping (DeeplinkData?) -> Void) {
-        var body: [String: Any] = [
-            "api_key":    config.apiKey,
-            "user_agent": userAgent(),
-        ]
+        // Collect all UIKit signals on the main thread first.
+        // UIScreen.main, UIDevice, UIPasteboard must be accessed on main thread.
+        // Then fire the network call on a background queue — never block main.
+        let collectAndFire = {
+            var body: [String: Any] = [
+                "api_key":    self.config.apiKey,
+                "user_agent": self.userAgent(),
+            ]
 
-        // Keychain device ID — survives reinstall, deterministic on returning users.
-        let deviceId = KeychainHelper.getOrCreateDeviceId()
-        body["device_id"] = deviceId
-        DeeplinkLogger.log("fetchInitData — device_id: \(deviceId)")
+            // Keychain device ID — survives reinstall, deterministic on returning users.
+            let deviceId = KeychainHelper.getOrCreateDeviceId()
+            body["device_id"] = deviceId
+            DeeplinkLogger.log("fetchInitData — device_id: \(deviceId)")
 
-        // IDFV — Apple's stable per-vendor identifier, no ATT required.
-        // Resets only if ALL apps from this vendor are uninstalled.
-        if let idfv = UIDevice.current.identifierForVendor?.uuidString {
-            body["idfv"] = idfv
-            DeeplinkLogger.log("fetchInitData — idfv: \(idfv)")
-        }
+            // IDFV — Apple's stable per-vendor identifier, no ATT required.
+            if let idfv = UIDevice.current.identifierForVendor?.uuidString {
+                body["idfv"] = idfv
+                DeeplinkLogger.log("fetchInitData — idfv: \(idfv)")
+            }
 
-        // Clipboard attribution (opt-in via checkPasteboardOnInstall).
-        // The redirect page writes "deeplink-click:{fingerprintId}" to UIPasteboard
-        // when the user taps through to the App Store. Reading it here gives us the
-        // exact fingerprint ID for 100% deterministic matching.
-        // Note: reading UIPasteboard.general shows the iOS 16+ "pasted from" toast.
-        if pasteboardCheckEnabled {
-            if let pasteStr = UIPasteboard.general.string,
-               pasteStr.hasPrefix("deeplink-click:") {
-                let clickId = String(pasteStr.dropFirst("deeplink-click:".count))
-                if !clickId.isEmpty {
-                    body["pasteboard_click_id"] = clickId
-                    UIPasteboard.general.string = nil
-                    DeeplinkLogger.log("fetchInitData — clipboard click_id found: \(clickId)")
+            // Clipboard attribution (opt-in via checkPasteboardOnInstall).
+            // Note: reading UIPasteboard.general shows the iOS 16+ "pasted from" toast.
+            if self.pasteboardCheckEnabled {
+                if let pasteStr = UIPasteboard.general.string,
+                   pasteStr.hasPrefix("deeplink-click:") {
+                    let clickId = String(pasteStr.dropFirst("deeplink-click:".count))
+                    if !clickId.isEmpty {
+                        body["pasteboard_click_id"] = clickId
+                        UIPasteboard.general.string = nil
+                        DeeplinkLogger.log("fetchInitData — clipboard click_id found: \(clickId)")
+                    }
+                }
+            }
+
+            // Native device signals for probabilistic matching
+            let model = self.deviceModel()
+            let osVer = UIDevice.current.systemVersion
+            let screen = self.screenRes()
+            body["device_model"] = model
+            body["os_version"]   = osVer
+            body["screen_res"]   = screen
+            body["timezone"]     = TimeZone.current.identifier
+            body["language"]     = Locale.current.languageCode ?? "en"
+
+            DeeplinkLogger.log("fetchInitData — signals: model=\(model) os=\(osVer) screen=\(screen)")
+
+            // Network call on background thread
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.post("/sdk/init", body: body) { (response: SDKInitResponse?) in
+                    if let response {
+                        DeeplinkLogger.log("fetchInitData — matched=\(response.matched) alias=\(response.data?.alias ?? "none")")
+                    }
+                    guard let response, response.matched, let data = response.data else {
+                        completion(nil); return
+                    }
+                    completion(data.toDeeplinkData())
                 }
             }
         }
 
-        // Native device signals for probabilistic matching
-        body["device_model"] = deviceModel()
-        body["os_version"]   = UIDevice.current.systemVersion
-        body["screen_res"]   = screenRes()
-        body["timezone"]     = TimeZone.current.identifier
-        body["language"]     = Locale.current.languageCode ?? "en"
-
-        DeeplinkLogger.log("fetchInitData — signals: model=\(deviceModel()) os=\(UIDevice.current.systemVersion) screen=\(screenRes())")
-
-        post("/sdk/init", body: body) { (response: SDKInitResponse?) in
-            if let response {
-                DeeplinkLogger.log("fetchInitData — matched=\(response.matched) alias=\(response.data?.alias ?? "none")")
-            }
-            guard let response, response.matched, let data = response.data else {
-                completion(nil); return
-            }
-            completion(data.toDeeplinkData())
+        if Thread.isMainThread {
+            collectAndFire()
+        } else {
+            DispatchQueue.main.async { collectAndFire() }
         }
     }
 
@@ -166,25 +179,22 @@ internal final class APIClient {
         return "\(appName)/\(appVersion) \(os)"
     }
 
+    /// Thread-safe hardware model via sysctlbyname, e.g. "iPhone15,2".
     private func deviceModel() -> String {
-        var info = utsname()
-        uname(&info)
-        return withUnsafePointer(to: &info.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
-        }
+        var size = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        var machine = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.machine", &machine, &size, nil, 0)
+        return String(cString: machine)
     }
 
+    /// Must be called on the main thread — enforced by fetchInitData().
     private func screenRes() -> String {
-        var result = ""
-        let capture = {
-            let s = UIScreen.main
-            let w = Int(s.bounds.width)
-            let h = Int(s.bounds.height)
-            let scale = Int(s.scale)
-            result = "\(w)x\(h)x\(scale)"
-        }
-        if Thread.isMainThread { capture() } else { DispatchQueue.main.sync { capture() } }
-        return result
+        let s = UIScreen.main
+        let w = Int(s.bounds.width)
+        let h = Int(s.bounds.height)
+        let scale = Int(s.scale)
+        return "\(w)x\(h)x\(scale)"
     }
 }
 
