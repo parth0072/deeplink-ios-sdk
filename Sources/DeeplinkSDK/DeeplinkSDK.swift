@@ -50,6 +50,10 @@ public final class Deeplink {
     private static let firstLaunchKey = "dl_sdk_first_launch_done"
     private static let sessionIdKey   = "dl_sdk_session_id"
 
+    /// In-memory cache: alias → DeeplinkData. Populated by getInitData/onFirstLaunch.
+    /// getLinkData checks here first — avoids a redundant network call.
+    private static var linkDataCache: [String: DeeplinkData] = [:]
+
     private init(config: DeeplinkConfig) {
         self.config = config
         self.apiClient = APIClient(config: config)
@@ -151,9 +155,10 @@ public final class Deeplink {
         DeeplinkLogger.log("getInitData — fetching...")
 
         sdk.apiClient.fetchInitData { data in
-            if data != nil {
+            if let data {
                 UserDefaults.standard.set(true, forKey: initDataKey)
-                DeeplinkLogger.log("getInitData — match found: alias=\(data!.alias)")
+                linkDataCache[data.alias] = data
+                DeeplinkLogger.log("getInitData — match found: alias=\(data.alias)")
             } else {
                 DeeplinkLogger.log("getInitData — no match")
             }
@@ -304,7 +309,14 @@ public final class Deeplink {
             completion(nil)
             return
         }
+        // Return cached result if getInitData already fetched this alias — no extra network call
+        if let cached = linkDataCache[alias] {
+            DeeplinkLogger.log("getLinkData — cache hit for alias=\(alias)")
+            DispatchQueue.main.async { completion(cached) }
+            return
+        }
         sdk.apiClient.fetchLinkData(alias: alias) { data in
+            if let data { linkDataCache[alias] = data }
             DispatchQueue.main.async { completion(data) }
         }
     }
