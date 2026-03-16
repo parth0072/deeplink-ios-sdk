@@ -81,6 +81,10 @@ public final class Deeplink {
     /// Alternatively, set `DeeplinkAPIKey` and `DeeplinkDomain` in Info.plist and
     /// call `Deeplink.configureFromInfoPlist()` instead.
     public static func configure(apiKey: String, domain: String) {
+        guard shared == nil else {
+            DeeplinkLogger.log("configure — already configured, skipping duplicate call")
+            return
+        }
         let config = DeeplinkConfig(apiKey: apiKey, domain: domain)
         shared = Deeplink(config: config)
         DeeplinkLogger.log("Configured — apiKey=\(apiKey.prefix(8))*** domain=\(domain)")
