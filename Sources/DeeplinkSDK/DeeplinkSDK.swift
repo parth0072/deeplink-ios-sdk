@@ -283,6 +283,32 @@ public final class Deeplink {
         sdk.apiClient.recordImpression(alias: alias, completion: completion)
     }
 
+    /// Fetch server-stored params/metadata for a link by alias.
+    ///
+    /// Call this after `handleIncomingURL` returns an `IncomingLink` to retrieve the
+    /// `params` dictionary that was set when the link was created — these are NOT
+    /// embedded in the URL and require a server lookup.
+    ///
+    /// ```swift
+    /// Deeplink.handleIncomingURL(url) { link in
+    ///     guard let link else { return }
+    ///     let alias = link.pathComponents.first ?? ""
+    ///     Deeplink.getLinkData(alias: alias) { data in
+    ///         let productId = data?.metadata["product_id"]
+    ///     }
+    /// }
+    /// ```
+    public static func getLinkData(alias: String, completion: @escaping (DeeplinkData?) -> Void) {
+        guard let sdk = shared else {
+            assertionFailure("Deeplink.configure() must be called first")
+            completion(nil)
+            return
+        }
+        sdk.apiClient.fetchLinkData(alias: alias) { data in
+            DispatchQueue.main.async { completion(data) }
+        }
+    }
+
     /// Track a custom event.
     ///
     /// Property values must be JSON-serialisable types (String, Int, Double, Bool).

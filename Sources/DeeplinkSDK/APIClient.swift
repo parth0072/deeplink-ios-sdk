@@ -153,6 +153,33 @@ internal final class APIClient {
         }
     }
 
+    func fetchLinkData(alias: String, completion: @escaping (DeeplinkData?) -> Void) {
+        guard let url = URL(string: config.apiBaseURL.absoluteString + "/sdk/resolve/\(alias)?api_key=\(config.apiKey)")
+        else { completion(nil); return }
+
+        DeeplinkLogger.log("fetchLinkData — alias=\(alias)")
+
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "GET"
+
+        session.dataTask(with: req) { data, response, error in
+            if let error { DeeplinkLogger.error("fetchLinkData error: \(error)"); completion(nil); return }
+            guard let data,
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode)
+            else { completion(nil); return }
+
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            if let resp = try? decoder.decode(SDKInitResponse.self, from: data), resp.matched {
+                DeeplinkLogger.log("fetchLinkData — metadata=\(resp.data?.metadata ?? [:])")
+                completion(resp.data?.toDeeplinkData())
+            } else {
+                completion(nil)
+            }
+        }.resume()
+    }
+
     func recordImpression(alias: String, completion: ((Bool) -> Void)? = nil) {
         post("/api/impressions", body: [
             "api_key": config.apiKey,
